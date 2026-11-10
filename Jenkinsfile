@@ -41,7 +41,7 @@ pipeline {
         }
 
         stage('Validation production') {
-            when { branch 'main' }
+            when { anyOf { branch 'main'; expression { env.BRANCH_NAME == null } } }
             steps {
                 timeout(time: 15, unit: 'MINUTES') {
                     input message: "Déployer la version ${VERSION} en production ?", ok: 'Déployer'
@@ -50,7 +50,7 @@ pipeline {
         }
 
         stage('Déploiement production') {
-            when { branch 'main' }
+            when { anyOf { branch 'main'; expression { env.BRANCH_NAME == null } } }
             steps {
                 withCredentials([string(credentialsId: 'redis-password-prod', variable: 'REDIS_PASSWORD')]) {
                     script {
