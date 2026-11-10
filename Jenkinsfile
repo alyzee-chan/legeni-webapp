@@ -28,16 +28,15 @@ pipeline {
         }
 
         stage('Déploiement staging') {
-            environment {
-                REDIS_PASSWORD = credentials('redis-password-staging')
-            }
             steps {
-                sh '''
-                    chmod +x deploy/smoke-test.sh
-                    IMAGE_REF=$IMAGE:$VERSION APP_ENV=staging APP_COLOR='#bf8700' PORT=8081 \
-                        $COMPOSE -p legeni-staging up -d --wait
-                '''
-                sh './deploy/smoke-test.sh legeni-staging $VERSION'
+                withCredentials([string(credentialsId: 'redis-password-staging', variable: 'REDIS_PASSWORD')]) {
+                    sh '''
+                        chmod +x deploy/smoke-test.sh
+                        IMAGE_REF=$IMAGE:$VERSION APP_ENV=staging APP_COLOR='#bf8700' PORT=8081 \
+                            $COMPOSE -p legeni-staging up -d --wait
+                    '''
+                    sh './deploy/smoke-test.sh legeni-staging $VERSION'
+                }
             }
         }
 
@@ -52,32 +51,31 @@ pipeline {
 
         stage('Déploiement production') {
             when { branch 'main' }
-            environment {
-                REDIS_PASSWORD = credentials('redis-password-prod')
-            }
             steps {
-                script {
-                    // Image actuellement en production : servira au rollback si besoin
-                    env.PREVIOUS_IMAGE = sh(
-                        script: "docker inspect -f '{{.Config.Image}}' legeni-prod-web-1 2>/dev/null || echo none",
-                        returnStdout: true
-                    ).trim()
-                    echo "Version en production avant déploiement : ${env.PREVIOUS_IMAGE}"
-                    try {
-                        sh '''
-                            IMAGE_REF=$IMAGE:$VERSION APP_ENV=prod APP_COLOR='#2da44e' PORT=8082 \
-                                $COMPOSE -p legeni-prod up -d --wait
-                            ./deploy/smoke-test.sh legeni-prod $VERSION
-                        '''
-                    } catch (err) {
-                        if (env.PREVIOUS_IMAGE != 'none') {
-                            echo "Smoke test KO : retour à ${env.PREVIOUS_IMAGE}"
+                withCredentials([string(credentialsId: 'redis-password-prod', variable: 'REDIS_PASSWORD')]) {
+                    script {
+                        // Image actuellement en production : servira au rollback si besoin
+                        env.PREVIOUS_IMAGE = sh(
+                            script: "docker inspect -f '{{.Config.Image}}' legeni-prod-web-1 2>/dev/null || echo none",
+                            returnStdout: true
+                        ).trim()
+                        echo "Version en production avant déploiement : ${env.PREVIOUS_IMAGE}"
+                        try {
                             sh '''
-                                IMAGE_REF=$PREVIOUS_IMAGE APP_ENV=prod APP_COLOR='#2da44e' PORT=8082 \
+                                IMAGE_REF=$IMAGE:$VERSION APP_ENV=prod APP_COLOR='#2da44e' PORT=8082 \
                                     $COMPOSE -p legeni-prod up -d --wait
+                                ./deploy/smoke-test.sh legeni-prod $VERSION
                             '''
+                        } catch (err) {
+                            if (env.PREVIOUS_IMAGE != 'none') {
+                                echo "Smoke test KO : retour à ${env.PREVIOUS_IMAGE}"
+                                sh '''
+                                    IMAGE_REF=$PREVIOUS_IMAGE APP_ENV=prod APP_COLOR='#2da44e' PORT=8082 \
+                                        $COMPOSE -p legeni-prod up -d --wait
+                                '''
+                            }
+                            error "Déploiement production échoué, rollback effectué"
                         }
-                        error "Déploiement production échoué, rollback effectué"
                     }
                 }
             }
